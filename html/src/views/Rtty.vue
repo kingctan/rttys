@@ -99,7 +99,50 @@ export default {
             this.upfile.modal = false;
             this.term.focus();
 
-            this.handleSendSession(this.zsentry.get_confirmed_session(), this.upfile.file);
+            let reader = new FileReader();
+
+            //This really shouldn’t happen … so let’s
+            //blow up if it does.
+            reader.onerror = (e) => {
+                throw("File read error: " + e);
+            };
+
+            let total = this.upfile.file.size;
+            let offset = 0;
+
+            console.log('send name:' + this.upfile.file.name);
+            let bl = Buffer.alloc(2);
+            let bn = Buffer.from(this.upfile.file.name);
+            bl.writeUInt16BE(bn.length)
+            this.ws.send(Buffer.concat([bl, bn]));
+
+            let cnt = 0;
+            reader.onload = (e) => {
+                let piece = new Uint8Array(e.target.result);
+                this.ws.send(piece);
+
+                offset += e.loaded;
+
+                console.log('read:' + offset + '/' + total + ' ' + cnt++);
+
+                if (offset < total) {
+                    this.readFile(this.upfile.file, reader, offset, 8192);
+                    return;
+                }
+                
+                let eb = Buffer.alloc(4);
+                eb[0] = 0x12;
+                eb[1] = 0x34;
+                eb[2] = 0x56;
+                eb[3] = 0x78;
+                this.ws.send(eb);
+
+                console.log('up ok');
+            };
+
+            this.readFile(this.upfile.file, reader, offset, 8192);
+
+            //this.handleSendSession(this.zsentry.get_confirmed_session(), this.upfile.file);
         },
         readFile(file, fr, offset, size) {
             let blob = file.slice(offset, offset + size);
@@ -206,7 +249,7 @@ export default {
         this.username = this.$route.query.username;
         this.password = this.$route.query.password;
 
-        let ws = new WebSocket(protocol + location.host + '/ws?devid=' + devid);
+        let ws = new WebSocket(protocol + '192.168.0.100:5900' + '/ws?devid=' + devid);
 
         ws.onopen = () => {
             ws.binaryType = 'arraybuffer';
@@ -321,7 +364,14 @@ export default {
                     }
                 }
 
-                zsentry.consume(ev.data);
+                let data = Buffer.from(ev.data);
+                if (data.length > 3 && data[0] == 0x12 && data[1] == 0x34 && data[2] == 0x56 && data[3] == 0x78) {
+                    console.log('start recv');
+
+                    this.upfile = {modal: true, file: null};
+                    return;
+                }
+                term.write(data.toString());
             }
         };
 
